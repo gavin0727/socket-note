@@ -1,0 +1,466 @@
+#+author:Gavin
+#+title:TCP/IP网络编程
+
+* 理解网络编程和套接字
+** socket相关函数
+#+begin_src c
+  #include <sys/socket.h>
+  int socket(int domain, int type, int protocol);
+  int bind(int sockfd, struct sockaddr *myaddr, socklen_t addrlen);
+  int listen(int sockfd, int backlog);
+  int accpet(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+  int connect(int sockfd, struct sockaddr *serv_addr, socklen_t addrlen);
+#+end_src
+** 文件操作相关函数
+ #+begin_src c
+   #include <sys/types.h>
+   #include <sys/stat.h>
+   #include <fcntl.h>
+   #include <unistd.h>
+
+   int open(const char *path, int flag);
+   int close(int fd);
+   ssize_t write(int fd, const void *buf, size_t nbytes);
+   ssize_t read(int fd, void *buf, size_t nbytes);
+ #+end_src
+ 
+ | 打开模式   | 含义                       |
+ |------------+----------------------------|
+ | ~O_CREAT~  | 必要时创建文件             |
+ | ~O_TRUNC~  | 删除全部现有数据           |
+ | ~O_APPEND~ | 维持现有数据，保存到其后面 |
+ | ~O_RDONLY~ | 只读打开                   |
+ | ~O_WRONLY~ | 只写打开                   |
+ | ~O_RDWR~   | 读写打开                   |
+ 
+* 套接字类型与协议设置
+#+begin_src c
+  #include <sys/socket.h>
+  
+  int socket(int domain, int type, int protocol);
+#+end_src
+- domain: 协议族信息
+- type: 传输类型
+- protocol: 协议信息
+
+** domain
+| 名称        | 协议族               |
+|-------------+----------------------|
+| ~PF_INET~   | IPv4互联网协议族     |
+| ~PF_INET6~  | IPv6互联网协议族     |
+| ~PF_LOCAL~  | 本地通信的UNIX协议族 |
+| ~PF_PACKET~ | 底层套接字协议族     |
+| ~PF_IPX~    | IPX Novell协议族     |
+** type
+1. ~SOCK_STREAM~
+   - 传输过程中数据不会消失
+   - 按序传输数据
+   - 传输的数据不存在数据边界
+2. ~SOCK_DGRAM~
+   - 强调快速传输而非传输顺序
+   - 传输的数据可能丢失也可能损毁
+   - 传输的数据有数据边界
+   - 限制每次传输的数据大小
+** protocol
+大部分情况根据前两个参数可以创建所需套接字，可以传递0，除非遇到以下情况：
+
+“同一协议族存在多个数据传输方式相同的协议”
+#+begin_src c
+  int tcp_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+  int tcp_socket = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+#+end_src
+* 地址族与数据序列
+** IPv4地址表示
+#+begin_src c
+  struct sockaddr_in {
+      sa_family_t sin_family;  // 地址族
+      uint16_t sin_port;       // 16位TCP/UDP端口号
+      struct in_addr sin_addr; // 32位IP地址
+      char sin_zero[8];        // 不使用
+  };
+
+  struct in_addr {
+      in_addr_t s_addr;        // 32位IP地址
+  };
+#+end_src
+~int bind(int sockfd, struct sockaddr *myaddr, socklen_t addrlen);~
+
+bind函数第二个参数期望sockaddr结构体变量地址，定义如下：
+#+begin_src c
+  struct sockaddr {
+      sa_family_t sin_family;
+      char sa_data[14];
+  };
+#+end_src
+此结构体成员 ~sa_data~ 成员中需要包括IP地址和端口号，剩余部分填充为0
+** 网络字节序与地址变换
+网络字节序：统一为大端序
+
+字节序转换函数：
+#+begin_src c
+  unsigned short htons(unsigned short);
+  unsigned short ntohs(unsigned short);
+  unsigned long htons(unsigned long);
+  unsigned long ntohs(unsigned long);
+#+end_src
+htos中h代表主机字节序，n代表网络字节序
+** 网络地址初始化
+~struct sockaddr_in~ 中保存IP地址的成员为32为整数型数据，需要将字符串型数据转化为整型，函数如下：
+#+begin_src c
+  #include <arpa/inet.h>
+
+  // 成功返回32位大端序整数值,失败返回INADDR_NONE
+  in_addr_t inet_addr(const char *string);
+  
+  // 成功返回1,失败返回0
+  int inet_aton(const char *string, struct in_addr_t *addr);
+#+end_src
+同时存在将网络字节序整数型IP地址转化为字符串形式的函数：
+#+begin_src c
+  // 函数返回的字符串存储在静态缓冲区，调用者不需要释放，如果需要保存，则需要复制到另外的内存空间
+  char *inet_ntoa(struct in_addr_t adr);
+#+end_src
+* 基于TCP的服务器端/客户端
+** TCP/IP协议栈
+TCP/IP协议栈共4层
+1. 链路层: 链路层是物理链接领域标准化的结果，定义了LAN、WAN、MAN等网络标准
+2. IP层: 解决在复杂网络中传输数据时路径的选择，该层使用的协议就是IP。IP本身是面向消息的、不可靠的协议。
+3. TCP/UDP层: TCP层和UDP层以IP层提供的路径信息为基础完成实际的数据传输，故该层又称传输层。
+4. 应用层: 上述内容是套接字通信过程中自动处理的。选择数据传输路径、数据确认过程被隐藏在套接字内部。
+** 实现基于TCP的服务器端/客户端
+*** TCP服务器端默认调用顺序
+socket() -> bind() -> listen() -> accept() -> read()/write() -> close()
+
+创建套接字 -> 分配套接字地址 -> 等待连接请求状态 -> 允许链接 -> 数据交换 -> 断开连接
+
+bind函数为套接字分配了地址，接下来通过调用listen函数进入等待请求连接状态。
+只有调用了listen函数，客户端才能进入可发出连接请求的状态。换言之，这时客户端才能调用connect函数。
+#+begin_src c
+  #include <sys/socket.h>
+
+  int listen(int sock, int backlog);
+#+end_src
+- sock: 希望进入等待请求连接状态的套接字文件描述符
+- backlog: 连接请求等待队列的长度
+*** 受理客户端连接请求
+#+begin_src c
+  #include <sys/socket.h>
+
+  int accpet(int sock, struct sockaddr *addr, socklen_t *addrlen);
+#+end_src
+- sock: 服务器套接字的文件描述符
+- addr: 用来保存发起连接请求的客户端地址信息的变量地址值
+- addrlen: 用来保存addr结构体的长度
+
+accept函数受理连接请求等待队列中待处理的客户端连接请求，函数调用成功时，accept函数内部将产生用于数据
+I/O的套接字，并返回其文件描述符。
+*** TCP客户端的默认函数调用顺序
+socket() -> connect() -> read()/write() -> close()
+
+创建套接字 -> 请求连接 -> 交换数据 -> 断开连接
+
+与服务器端相比，区别在于“请求连接”，它是创建客户端套接字后向服务器端发起的连接请求。
+#+begin_src c
+  #include <sys/socket.h>
+
+  int connect(int sock, struct sockaddr *servaddr, socklen_t *addrlen);
+#+end_src
+- sock: 客户端套接字的文件描述符
+- addr: 保存目标服务器地址信息的变量地址值
+- addrlen: servaddr的大小 -> sizeof(servaddr)
+所谓“接收连接”并不意味着服务器端调用accept函数，其实是服务器端把连接请求信息记录到等待队列。
+
+客户端的IP地址和端口号在调用connect函数时自动分配，无需调用bind函数进行分配。
+** TCP原理
+*** TCP套接字的I/O缓冲
+实际上，write函数调用后并非立即传输数据，read函数调用后也并非马上接收数据。
+更准确来讲，write函数调用瞬间，数据将移至输出缓存，read函数调用瞬间，从输入缓冲读取数据。
+
+I/O缓冲特性：
+1. I/O缓冲在每个TCP套接字中单独存在
+2. I/O缓冲在创建套接字时自动生成
+3. 即使关闭套接字也会继续传递输出缓冲中遗留的数据
+4. 关闭套接字将丢失输入缓冲区的数据
+*** TCP内部工作原理1：与对方套接字的连接
+TCP套接字从创建到消失所经过程分为以下三步：
+1. 与对方套接字建立连接
+2. 与对方套接字进行数据交换
+3. 断开与对方套接字的连接
+
+TCP套接字连接过程：
+
+A: [SYN]     SEQ:1000 ACK:-
+
+B: [SYN+ACK] SEQ:2000 ACK:1001
+
+A: [ACK]     SEQ:1001 ACK:2001
+*** TCP内部工作原理2：与对方主机的数据交换
+通过第一步三次握手后完成了数据交换的准备，下面正式开始收发数据。
+
+A: SEQ:1200 100 byte data
+
+B: ACK:1301
+
+A: SEQ:1301 100 byte data
+
+B: ACK:1402
+
+如果A在发送SEQ 1301数据包时发生了错误，B未收到。经过一段时间后，A仍未收到对于SEQ 1301的ACK确认，就会
+试着重传该数据包。
+*** TCP内部工作原理3：断开与套接字的连接
+TCP套接字断开连接时需要双方协商：
+
+A: [FIN] SEQ:5000 ACK:-
+
+B: [ACK] SEQ:7500 ACK:5001
+
+B: [FIN] SEQ:7501 ACK:5001
+
+A: [ACK] SEQ:5001 ACK:7502
+
+其中主机B向主机A传递了两次ACK 5001，第二次FIN数据包中的ACK 5001是因为接收ACK消息后未接收数据而重传的。
+* 基于UDP的服务器端/客户端
+** 基于UDP的数据I/O函数
+创建好TCP套接字后，传输数据时无需再添加地址信息。因为TCP套接字将保持与对方套接字的连接。
+但是UDP套接字不会保持连接状态，因此每次传输数据时都要添加目标地址信息。
+
+UDP相关函数：
+#+begin_src c
+  #include <sys/socket.h>
+
+  ssize_t sendto(int sock, void *buff, size_t nbytes, int flags,
+                 struct sockaddr *to, socklen_t addrlen);
+
+
+#+end_src
+- sock: 用于传输数据的UDP套接字文件描述符
+- buff: 保存待传输数据的缓冲地址值
+- nbytes: 待传输的数据长度
+- flag: 可选项参数，若没有则传递0
+- to: 存有目标地址信息的sockaddr结构体变量的地址
+- addrlen: 地址结构体变量的长度
+
+#+begin_src c
+  #include <sys/socket.h>
+  
+  ssize_t recvfrom(int sock, void *buff, size_t nbytes, int flags,
+                 struct sockaddr *from, socklen_t *addrlen);
+#+end_src
+- sock: 用于接收数据的UDP套接字文件描述符
+- buff: 保存接收数据的缓冲地址值
+- nbytes: 可接受的最大字节数
+- flag: 可选项参数，若没有则传递0
+- from: 存有发送端地址信息的sockaddr结构体变量的地址
+- addrlen: 地址结构体变量的长度
+
+** UDP的数据传输特性和调用connect函数
+*** 存在数据边界的UDP套接字
+TCP数据传输不存在数据边界：这表示“数据传输过程中调用I/O函数的次数不具有任何意义。”
+
+UDP是具有数据边界的协议，输入函数的调用次数和输出函数的调用次数完全一致，才能保证接受全部已发送数据
+*** 已连接(connected)UDP套接字和未连接(unconnected)UDP套接字
+TCP套接字中需注册待传输数据的目标IP和端口号，而UDP中无需注册。因此，通过sendto函数传输数据的过程大致分为以下3个阶段：
+1. 向UDP套接字注册目标IP和端口号
+2. 传输数据
+3. 删除UDP套接字中注册的目标地址信息
+
+每次调用sendto函数重复上述过程。每次都变更目的地址，因此可以重复利用同一个UDP套接字向不同目标传输数据。
+这种未注册目标地址信息的套接字称为未连接套接字，反之，注册了目标地址的套接字称为connected套接字。
+*** 创建已连接UDP套接字
+创建已连接UDP套接字的过程格外简单，只需针对UDP套接字调用connect函数
+* 优雅地断开套接字连接
+TCP中断开连接过程比建立连接过程更重要，因为连接过程一般不会出现大的变数，但断开过程可能发生预想不到的情况。
+** 单方面断开连接带来的问题
+Linux的close函数意味着完全断开连接。完全断开不仅指无法传输数据，而且也不能接受数据。
+
+如果在A/B两台主机进行双向通信时，A发送完最后的数据后，调用close函数断开了连接，之后A无法在接收B传输到数据。
+实际上，是完全无法调用与接收数据相关函数。最终由B传输的，A必须接收的数据也销毁了。
+
+为了解决这类问题，“只关闭一部分数据交换中使用的流”(Half-close)的方法应运而生。
+断开一部分连接是指，可以接收数据但无法传输，或者可以传输数据但无法接收。顾名思义就是只关闭流的一半。
+** 套接字和流(Stream)
+一旦两台主机间建立了套接字连接，每个主机就会拥有单独的输入流和输出流。
+当然，其中一个主机的输入流和另一主机的输出流相连，而输出流则与另一主机的输入流相连。
+** 针对优雅断开的shutdown函数
+shutdown函数用来关闭其中一个流。
+#+begin_src c
+  #include <sys/socket.h>
+
+
+  int shutdown(int sock, int howto);
+#+end_src
+- sock: 需要断开的套接字文件描述符
+- howto: 传递断开方式信息
+其中，howto取值如下所示：
+- ~SHUT_RD~ : 断开输入流。套接字无法接收数据。即使输入缓冲收到数据也会抹去，而且无法调用输入相关函数。
+- ~SHUT_WR~ : 断开输出流。套接字无法传输数据。但如果输出缓冲还留有未传输的数据，则将传递至目标主机
+- ~SHUT_RDWR~ : 同时断开I/O流。这相当于分2次调用shutdown，其中一次以 ~SHUT_RD~ 为参数，另一次以 ~SHUT_WR~ 为参数
+* 域名及网络地址
+** 域名系统
+DNS是对IP地址和域名进行相互转换的系统，其核心是DNS服务器
+
+所有计算机中都记录着默认DNS服务器地址。在浏览器地址栏输入域名后，浏览器通过默认DNS服务器获取该域名对应的IP地址信息，之后才真正接入该网站。
+
+计算机内置的默认DNS服务器并不知道网络上所有域名的IP地址信息。若该DNS服务器无法解析，则会询问其他DNS服务器，并提供给用户。
+** IP地址和域名之间的转换
+*** 利用域名获取IP地址
+#+begin_src c
+  #include <netdb.h>
+
+  struct hostent *gethostbyname(const char *hostname);
+#+end_src
+该函数只要传递域名字符串，就会返回域名对应的IP地址。只是返回时，地址信息装入hostent结构体，定义如下：
+#+begin_src c
+  struct hostent {
+      char *h_name;
+      char **h_aliases;
+      int h_addrtype;
+      int h_length;
+      char **h_addr_list;
+  }
+#+end_src
+结构体各成员介绍：
+- ~h_name~: 该变量存有官方域名。
+- ~h_aliases~: 可以通过多个域名访问同一主页。同一IP可以绑定多个域名。
+- ~h_addrtype~: IP地址的地址族信息。
+- ~h_length~: 保存IP地址长度。对于IPv4地址，保存4；对于IPv6地址，保存16.
+- ~h_addr_list~: 通过该变量以整数形式保存域名对应的IP地址
+*** 利用IP地址获取域名
+#+begin_src c
+  #include <netdb.h>
+
+  struct hostent *gethostbyaddr(const char *addr, socklen_t len, int family);
+#+end_src
+- addr: 含有IP地址信息的in_addr结构体指针
+- len: 第一个参数的字节数，IPv4为4，IPv6为16
+- family: 地址族信息
+* 套接字的多种可选项
+** 套接字可选项和I/O缓冲大小
+*** ~getsockopt~ & ~setsockopt~
+套接字可选项的读取和设置通过如下两个函数完成。
+#+begin_src c
+  #include <sys/socket.h>
+
+  int getsockopt(int sock, int level, int optname, void *optval, socklen_t *optlen);
+#+end_src
+- sock: 用于查看选项套接字文件描述符
+- level: 要查看的可选项的协议层
+- optname: 要查看的可选项名
+- optval: 保存查看结果的缓冲地址值
+- optlen: optval的缓冲大小。调用函数后，该变量保存通过optval返回的可选项信息字节数
+
+#+begin_src c
+  #include <sys/socket.h>
+
+  int setsockopt(int sock, int level, int optname, const void *optval, socklen_t optlen);
+#+end_src
+- sock: 用于更改可选项套接字文件描述符
+- level: 要更改的可选项的协议层
+- optname: 要更改的可选项名
+- optval: 保存要更改的选项信息的缓冲地址值
+- optlen: optval的缓冲大小。
+*** ~SO_SNDBUF~ & ~SO_RCVBUF~
+创建套接字同时生成I/O缓冲， ~SO_SNDBUF~ 是输出缓冲大小相关可选项， ~SO_RCVBUF~ 是输入缓冲区大小相关可选项。
+使用这两个可选项既可以读取当前I/O缓冲区大小，也可以进行更改。
+** ~SO_REUSEADDR~
+*** Time-wait
+套接字在经过四次握手后并非立即消除，而是要经过一段时间的Time-wait状态。
+
+只有先断开连接（先发送FIN消息的）主机才会经过Time-wait状态。因此，若是服务器端先断开连接，则无法立即重新运行。
+套接字处于Time-wait状态时，相应端口是正在使用的状态。
+
+A: [FIN] SEQ:5000 ACK:-
+
+B: [ACK] SEQ:7500 ACK:5001
+
+B: [FIN] SEQ:7501 ACK:5001
+
+A: [ACK] SEQ:5001 ACK:7502
+
+为何需要Time-wait状态：
+假如主机A在向主机B发送ACK消息（SEQ 5001、ACK 7502）后立即消除套接字，但是这条ACK消息在传递途中丢失，未能传给主机B。
+这时主机B认为自己之前发送的FIN消息（SEQ 7501 ACK 5001）未能到达主机A，继而进行重传。
+但是此时主机A已经是完全终止的状态，因此主机B永远无法收到从主机A最后传来的ACK消息。
+相反，如果主机A的套接字处于Time-wait状态，则会向主机B重传最后的ACK消息，主机B也可以正常终止。
+*** 地址再分配
+有时系统故障从而紧急停止，这是需要尽快重启服务器端以提供服务，但是因为Time-wait状态必须等待几分钟。
+因此，Time-wait并非只有优点，有些情况可能引发更大的问题。
+
+解决方案就是更改套接字选项中 ~SO_REUSEADDR~ 的状态，默认值为0，表示无法分配处于Time-wait状态中的套接字端口号。
+#+begin_src c
+  int option = 1;
+  setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*)&option, sizeof(option));
+#+end_src
+** ~TCP_NODELAY~
+*** Nagle算法
+Nagle算法：只有收到前一数据的ACK消息时，Nagle算法才发送下一数据
+
+TCP套接字默认使用Nagle算法交换数据，因此最大限制地进行缓冲，直到收到ACK。
+
+Nagle算法并不是什么时候都适用。根据传输数据的特性，网络流量未受太大影响时，不实用Nagle算法要比使用它时传输速度快。
+最典型的时“传输大文件数据”。将文件数据传入输出缓冲不会花费太多时间，因此即使不使用Nagle算法，也会在装满输出缓冲时传输数据包。
+不仅不会增加数据包的数量，反而在无需等待ACK的前提下连续传输，提升传输速度。
+*** 禁用Nagle算法
+禁用方法很简单，只需要将套接字可选项 ~TCP_NODELAY~ 改为1即可。
+#+begin_src c
+  int option = 1;
+  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (void*)&option, sizeof(option));
+#+end_src
+* 多进程服务器端
+** 理解进程
+进程：占用内存空间的正在运行的程序
+*** 进程ID
+所有进程会从操作系统分配到ID，其值为大于2的整数，1要分配给操作系统启动后的首个进程。
+*** fork函数
+#+begin_src c
+  #include <unistd.h>
+
+  pit_t fork(void);
+#+end_src
+成功时返回进程ID，失败时返回-1
+
+fork函数将创建调用的进程副本。两个进程都将执行fork函数调用后的语句。
+之后的程序流根据fork函数返回值进行区分：
+- 父进程：fork函数返回子进程ID
+- 子进程：fork函数返回0
+** 进程和僵尸进程
+*** 僵尸(Zombie)进程
+进程完成工作后（执行完main函数中的程序后）应该被销毁，但有时这些进程将变为僵尸进程，占用资源。
+*** 产生僵尸进程的原因
+向exit函数传递的参数值和main函数的return语句返回的值都会传递给操作系统。
+而操作系统不会销毁子进程，直到把这些值传递给产生该子进程的父进程。处在这种状态的进程就是僵尸进程。
+
+只有父进程主动发起请求时，操作系统才会传递该值。
+
+销毁僵尸进程：
+1. 利用wait函数
+   #+begin_src c
+     #include <sys/wait.h>
+
+     pid_t wait(int *statloc);
+   #+end_src
+   成功时返回终止的子进程ID，失败时返回-1
+
+   调用此函数时如果已有子进程终止，那么子进程终止时传递的返回值（exit函数的参数值、main函数的返回值）将
+   保存到该函数的参数所指的内存空间。由于函数参数指向的单元中含有其他信息，因此需要通过下列宏进行分离：
+   - WIFEXITED 子进程正常终止时返回true
+   - WEXITSTATUS 返回子进程的返回值
+   也就是说，向wait函数传递变量status的地址时，调用wait函数后应编写如下代码：
+   #+begin_src c
+     if (WIFEXITED(status)) {
+         puts("Normal termination");
+         printf("Child pass num : %d\n", WEXITSTATUS(status));
+     }
+   #+end_src
+   调用wait函数时，如果没有已终止的子进程，那么程序将阻塞直到有子进程终止。
+
+2. 使用waitpid函数
+   #+begin_src c
+     #include <sys/wait.h>
+
+     pid_t wait(pid_t pid, int *statloc, int options);
+   #+end_src
+   - pid: 等待终止的目标子进程ID，如果传递-1，可以等待任意子进程终止
+   - statloc: 与wait函数中的statloc参数含义相同
+   - options: 传递WNOHANG，即使没有终止的子进程也不会进入阻塞状态，而是返回0并退出函数
+*** 信号处理
