@@ -12,26 +12,26 @@
   int connect(int sockfd, struct sockaddr *serv_addr, socklen_t addrlen);
 #+end_src
 ** 文件操作相关函数
- #+begin_src c
-   #include <sys/types.h>
-   #include <sys/stat.h>
-   #include <fcntl.h>
-   #include <unistd.h>
+#+begin_src c
+  #include <sys/types.h>
+  #include <sys/stat.h>
+  #include <fcntl.h>
+  #include <unistd.h>
 
-   int open(const char *path, int flag);
-   int close(int fd);
-   ssize_t write(int fd, const void *buf, size_t nbytes);
-   ssize_t read(int fd, void *buf, size_t nbytes);
- #+end_src
+  int open(const char *path, int flag);
+  int close(int fd);
+  ssize_t write(int fd, const void *buf, size_t nbytes);
+  ssize_t read(int fd, void *buf, size_t nbytes);
+#+end_src
 
- | 打开模式   | 含义                       |
- |------------+----------------------------|
- | ~O_CREAT~  | 必要时创建文件             |
- | ~O_TRUNC~  | 删除全部现有数据           |
- | ~O_APPEND~ | 维持现有数据，保存到其后面 |
- | ~O_RDONLY~ | 只读打开                   |
- | ~O_WRONLY~ | 只写打开                   |
- | ~O_RDWR~   | 读写打开                   |
+| 打开模式   | 含义                       |
+|------------+----------------------------|
+| ~O_CREAT~  | 必要时创建文件             |
+| ~O_TRUNC~  | 删除全部现有数据           |
+| ~O_APPEND~ | 维持现有数据，保存到其后面 |
+| ~O_RDONLY~ | 只读打开                   |
+| ~O_WRONLY~ | 只写打开                   |
+| ~O_RDWR~   | 读写打开                   |
 
 * 套接字类型与协议设置
 #+begin_src c
@@ -73,14 +73,14 @@
 ** IPv4地址表示
 #+begin_src c
   struct sockaddr_in {
-      sa_family_t sin_family;  // 地址族
-      uint16_t sin_port;       // 16位TCP/UDP端口号
-      struct in_addr sin_addr; // 32位IP地址
-      char sin_zero[8];        // 不使用
+    sa_family_t sin_family;  // 地址族
+    uint16_t sin_port;       // 16位TCP/UDP端口号
+    struct in_addr sin_addr; // 32位IP地址
+    char sin_zero[8];        // 不使用
   };
 
   struct in_addr {
-      in_addr_t s_addr;        // 32位IP地址
+    in_addr_t s_addr;        // 32位IP地址
   };
 #+end_src
 ~int bind(int sockfd, struct sockaddr *myaddr, socklen_t addrlen);~
@@ -88,8 +88,8 @@
 bind函数第二个参数期望sockaddr结构体变量地址，定义如下：
 #+begin_src c
   struct sockaddr {
-      sa_family_t sin_family;
-      char sa_data[14];
+    sa_family_t sin_family;
+    char sa_data[14];
   };
 #+end_src
 此结构体成员 ~sa_data~ 成员中需要包括IP地址和端口号，剩余部分填充为0
@@ -231,7 +231,6 @@ UDP相关函数：
   ssize_t sendto(int sock, void *buff, size_t nbytes, int flags,
                  struct sockaddr *to, socklen_t addrlen);
 
-
 #+end_src
 - sock: 用于传输数据的UDP套接字文件描述符
 - buff: 保存待传输数据的缓冲地址值
@@ -244,7 +243,7 @@ UDP相关函数：
   #include <sys/socket.h>
 
   ssize_t recvfrom(int sock, void *buff, size_t nbytes, int flags,
-                 struct sockaddr *from, socklen_t *addrlen);
+                   struct sockaddr *from, socklen_t *addrlen);
 #+end_src
 - sock: 用于接收数据的UDP套接字文件描述符
 - buff: 保存接收数据的缓冲地址值
@@ -286,7 +285,6 @@ shutdown函数用来关闭其中一个流。
 #+begin_src c
   #include <sys/socket.h>
 
-
   int shutdown(int sock, int howto);
 #+end_src
 - sock: 需要断开的套接字文件描述符
@@ -312,11 +310,11 @@ DNS是对IP地址和域名进行相互转换的系统，其核心是DNS服务器
 该函数只要传递域名字符串，就会返回域名对应的IP地址。只是返回时，地址信息装入hostent结构体，定义如下：
 #+begin_src c
   struct hostent {
-      char *h_name;
-      char **h_aliases;
-      int h_addrtype;
-      int h_length;
-      char **h_addr_list;
+    char *h_name;
+    char **h_aliases;
+    int h_addrtype;
+    int h_length;
+    char **h_addr_list;
   }
 #+end_src
 结构体各成员介绍：
@@ -448,9 +446,9 @@ fork函数将创建调用的进程副本。两个进程都将执行fork函数调
    也就是说，向wait函数传递变量status的地址时，调用wait函数后应编写如下代码：
    #+begin_src c
      if (WIFEXITED(status)) {
-         puts("Normal termination");
-         printf("Child pass num : %d\n", WEXITSTATUS(status));
-     }
+       puts("Normal termination");
+       printf("Child pass num : %d\n", WEXITSTATUS(status));
+      }
    #+end_src
    调用wait函数时，如果没有已终止的子进程，那么程序将阻塞直到有子进程终止。
 
